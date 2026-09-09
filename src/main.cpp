@@ -62,6 +62,51 @@ int RunClient(const cli::Parsed& p)
     return static_cast<int>(cfg::ExitCode::Ok);
 }
 
+// 尝试启动后台 server（分离进程，不随本进程退出）。
+// 成功返回 true；已有实例在跑返回 true（幂等）；启动失败返回 false。
+bool EnsureServerRunning(const cli::Parsed& p)
+{
+    HANDLE mutex = CreateMutexW(nullptr, TRUE, cfg::kMutexName);
+    if (mutex && GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        CloseHandle(mutex);
+        return true; // server 已在跑
+    }
+    if (mutex) CloseHandle(mutex);
+
+    // 以自身路径分离启动（CREATE_NEW_PROCESS_GROUP | DETACHED，不阻塞本进程）
+    wchar_t exePath[MAX_PATH]{};
+    if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH))
+        return false;
+
+    std::wstring cmdline = std::wstring(L"\"") + exePath + L"\"";
+    if (p.ddaFallback) cmdline += L" --dda-fallback";
+    if (p.debug)       cmdline += L" --debug";
+
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = CreateProcessW(nullptr, cmdline.data(), nullptr, nullptr, FALSE,
+                                   CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
+                                   nullptr, nullptr, &si, &pi);
+    if (!ok)
+        return false;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+
+    // 等待管道就绪（server 初始化一般 < 200ms，上限 5s）
+    for (int i = 0; i < 50; ++i)
+    {
+        if (WaitNamedPipeW(cfg::kPipeName, 100))
+            return true;
+        if (GetLastError() == ERROR_FILE_NOT_FOUND)
+            Sleep(100);
+        else
+            Sleep(50);
+    }
+    return false;
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t* argv[])
@@ -99,7 +144,17 @@ int wmain(int argc, wchar_t* argv[])
         return rc;
     }
 
-    // 3) 有命令：作为控制客户端
+    // 3) 有命令：作为控制客户端；server 未运行且命令需要生效时先拉起 server
     if (mutex) CloseHandle(mutex);
+
+    const bool needsServer =
+        p.command == L"on" || p.command == L"off" || p.command == L"toggle" ||
+        p.command == L"images" || p.command == L"status";
+
+    if (needsServer && !EnsureServerRunning(p))
+    {
+        util::ConsoleOut(L"[ERROR] failed to start background instance");
+        return static_cast<int>(cfg::ExitCode::NoServer);
+    }
     return RunClient(p);
 }

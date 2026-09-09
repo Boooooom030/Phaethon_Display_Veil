@@ -2,7 +2,6 @@
 #include "../config.h"
 #include "../images/image_store.h"
 #include "../privacy/capture_exclusion.h"
-#include "../util/logger.h"
 #include "../util/text.h"
 #include <objidl.h>
 #include <gdiplus.h>
