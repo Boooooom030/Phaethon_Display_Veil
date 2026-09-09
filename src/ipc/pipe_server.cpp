@@ -1,3 +1,4 @@
+// pipe_server.cpp - named pipe server and control client
 #include "pipe_server.h"
 #include "../config.h"
 #include "../util/logger.h"
@@ -15,7 +16,7 @@ HWND              g_hwndTarget = nullptr;
 
 void HandleOneClient(HANDLE pipe)
 {
-    // 读一行 UTF-8 命令
+    // Read one UTF-8 command line
     char buf[512]{};
     DWORD read = 0;
     std::string acc;
@@ -25,7 +26,6 @@ void HandleOneClient(HANDLE pipe)
             break;
         acc.append(buf, read);
     }
-    // 去掉 \r\n
     while (!acc.empty() && (acc.back() == '\n' || acc.back() == '\r'))
         acc.pop_back();
 
@@ -33,7 +33,7 @@ void HandleOneClient(HANDLE pipe)
     const std::wstring trimmed = util::Trim(line);
 
     Request req;
-    // 协议：<CMD> [args...]；ON: "ON <spec> [IMG <dir>]"；IMG: "IMG <dir>"
+    // Protocol: <CMD> [args]; ON: "ON <spec> [IMG <dir>]"; IMG: "IMG <dir>"
     const size_t sp = trimmed.find(L' ');
     const std::wstring cmd = util::ToUpper(sp == std::wstring::npos
                                                ? trimmed
@@ -45,7 +45,6 @@ void HandleOneClient(HANDLE pipe)
     if (cmd == L"ON")
     {
         req.kind = Request::Kind::On;
-        // 解析 "ON <spec> [IMG <dir>]"
         const size_t imgPos = util::ToUpper(rest).find(L"IMG ");
         if (imgPos != std::wstring::npos)
         {
@@ -76,7 +75,7 @@ void HandleOneClient(HANDLE pipe)
         return;
     }
 
-    // 投递到 UI 线程同步处理（PostMessage 异步 + Event 等待，保证 ACK 语义）
+    // Hand off to the UI thread and wait for the ACK event
     auto* sync = new Sync{};
     sync->done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     auto* payload = new PendingRequest{ sync, req };
@@ -88,7 +87,7 @@ void HandleOneClient(HANDLE pipe)
     std::string out;
     if (wait != WAIT_OBJECT_0)
     {
-        // UI 线程未响应：绝不能伪装成功
+        // UI thread did not respond; never report success in that case
         out = "ERR ui thread did not respond (timeout)\n";
     }
     else if (!sync->resp.ok)
@@ -120,7 +119,7 @@ void ServerLoop(void (*onFatal)(const std::wstring&))
             cfg::kPipeName,
             PIPE_ACCESS_DUPLEX,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-            1, // 单实例：串行处理即可，避免并发状态问题
+            1, // single instance; requests are handled serially
             512, 512, 2000, nullptr);
 
         if (pipe == INVALID_HANDLE_VALUE)
@@ -136,7 +135,7 @@ void ServerLoop(void (*onFatal)(const std::wstring&))
                                    : (GetLastError() == ERROR_PIPE_CONNECTED ? TRUE : FALSE);
         if (!connected)
         {
-            // StopServer 触发的正常退出路径
+            // Normal exit path triggered by StopServer
             CloseHandle(pipe);
             if (!g_running) return;
             continue;
@@ -162,16 +161,15 @@ void StopServer()
 {
     if (!g_running) return;
     g_running = false;
-    // 唤醒阻塞在 ConnectNamedPipe 的线程：创建一次自连接
+    // Wake the thread blocked in ConnectNamedPipe with a self-connection
     HANDLE h = CreateFileW(cfg::kPipeName, GENERIC_READ | GENERIC_WRITE,
                            0, nullptr, OPEN_EXISTING, 0, nullptr);
     if (h != INVALID_HANDLE_VALUE)
     {
-        // 发送一个无效命令让循环退出
         const char junk[] = "QUIT\n";
         DWORD written = 0;
         WriteFile(h, junk, sizeof(junk) - 1, &written, nullptr);
-        // 不等待响应，server 会因 unknown command 返回 ERR 后回到循环发现 g_running=false
+        // No response expected; the loop sees g_running == false and exits
         CloseHandle(h);
     }
     if (g_thread.joinable())
@@ -183,7 +181,6 @@ bool SendCommand(const Request& req, int timeoutMs, bool& ok, std::wstring& resp
     ok = false;
     respText.clear();
 
-    // 等待管道可用
     if (!WaitNamedPipeW(cfg::kPipeName, timeoutMs))
     {
         const DWORD e = GetLastError();
@@ -206,7 +203,7 @@ bool SendCommand(const Request& req, int timeoutMs, bool& ok, std::wstring& resp
     {
     case Request::Kind::On:
     {
-        // ON 携带 monitor spec + 可选图片目录："ON <spec> [IMG <dir>]"
+        // "ON <spec> [IMG <dir>]"
         std::string line = "ON ";
         line += util::WideToUtf8(req.monitorSpec);
         if (!req.imageDir.empty())
@@ -246,7 +243,7 @@ bool SendCommand(const Request& req, int timeoutMs, bool& ok, std::wstring& resp
         return false;
     }
 
-    // 读全部响应（server 会 FlushFileBuffers 后断开，读到 EOF）
+    // Read until EOF (server flushes and disconnects)
     std::string acc;
     char buf[1024]{};
     for (;;)
@@ -258,7 +255,7 @@ bool SendCommand(const Request& req, int timeoutMs, bool& ok, std::wstring& resp
     }
     CloseHandle(h);
 
-    // 解析
+    // Parse "OK[ body]" / "ERR[ message]"
     size_t nl = acc.find('\n');
     const std::string first = nl == std::string::npos ? acc : acc.substr(0, nl);
     const std::string rest  = nl == std::string::npos ? "" : acc.substr(nl + 1);
@@ -283,7 +280,7 @@ bool SendCommand(const Request& req, int timeoutMs, bool& ok, std::wstring& resp
         while (!body.empty() && (body.back() == '\n' || body.back() == '\r'))
             body.pop_back();
         respText = body.empty() ? L"unknown error" : util::Utf8ToWide(body);
-        return true; // 通信本身成功
+        return true; // communication itself succeeded
     }
     if (status.rfind("ERR ", 0) == 0)
     {

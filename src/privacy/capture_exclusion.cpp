@@ -7,7 +7,8 @@ namespace privacy {
 namespace {
 
 // WCA_EXCLUDED_FROM_DDA = 24：阻止窗口进入 Desktop Duplication API。
-// 未公开 API，需动态查找；仅作为 ddx 的额外 fallback，绝不作为主依赖。
+// Undocumented attribute; resolved dynamically. Optional extra layer for
+// ddx capture, never the primary mechanism.
 constexpr DWORD kWcaExcludedFromDda = 24;
 
 struct WINDOWCOMPOSITIONATTRIBDATA {

@@ -1,3 +1,4 @@
+// overlay_manager.cpp - overlay state machine and window set management
 #include "overlay_manager.h"
 #include "../config.h"
 #include "../util/logger.h"
@@ -63,7 +64,7 @@ Manager::EnableReport Manager::Enable(const std::vector<monitor::MonitorInfo>& t
         return report;
     }
 
-    // 幂等：已有 overlay 先销毁，防止重复 ON 泄漏旧窗口
+    // Idempotent: destroy existing overlays to avoid window leaks on repeated ON
     if (!overlays_.empty())
         DestroyAllLocked();
 
@@ -79,7 +80,7 @@ Manager::EnableReport Manager::Enable(const std::vector<monitor::MonitorInfo>& t
         CreateResult r = Create(m.rect, ddaFallback_);
         if (!r.hwnd)
         {
-            // 回滚：销毁已创建的全部 overlay —— 不允许“一块黑一块没黑”
+            // Roll back: destroy everything created so far; no partial coverage
             util::Logger::Instance().Error(L"Overlay create FAILED on " + m.device +
                                            L": " + r.error);
             for (const HWND h : created)
@@ -142,7 +143,7 @@ void Manager::HandleDisplayChange()
         LeaveCriticalSection(&Cs());
         return;
     }
-    const std::wstring spec = spec_; // 记住用户选择，重建时沿用
+    const std::wstring spec = spec_; // rebuild keeps the user's screen selection
     util::Logger::Instance().Info(L"Display change: rebuilding overlays");
     DestroyAllLocked();
     const auto targets = monitor::Select(spec);
@@ -192,7 +193,7 @@ void Manager::Reassert()
     }
     if (allAlive)
     {
-        // 重申 TOPMOST，防御其他 topmost 窗口插入
+        // Re-assert TOPMOST so other topmost windows stay below
         for (const HWND hwnd : overlays_)
             SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                          SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -253,7 +254,7 @@ void Manager::OnOverlayDestroyed(HWND hwnd)
 {
     EnterCriticalSection(&Cs());
     std::erase_if(overlays_, [hwnd](HWND h) { return h == hwnd; });
-    // 全部 overlay 意外消失且期望为 ON：视为异常
+    // Overlays gone while ON is expected: treat as an error
     if (wantOn_ && overlays_.empty() && state_ == State::On)
     {
         state_     = State::Error;

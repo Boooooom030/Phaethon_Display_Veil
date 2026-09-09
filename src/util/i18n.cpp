@@ -13,7 +13,7 @@ struct Entry {
     const wchar_t* en;
 };
 
-// 顺序必须与 S 枚举一致
+// Order must match the S enum
 constexpr Entry kTable[] = {
     /* TrayTip     */ { L"隐私遮罩",              L"Privacy Screen" },
     /* EnablePrivacy*/{ L"开启遮罩",              L"Enable privacy" },
