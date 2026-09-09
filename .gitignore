@@ -27,4 +27,11 @@ Thumbs.db
 .vs/
 .vscode/
 
+# Output dir (built by GitHub Actions)
 output/
+
+# rc.exe temp files
+src/RC*
+
+# Tools / scratch (diagnostic scripts, never part of the repo)
+tools/
