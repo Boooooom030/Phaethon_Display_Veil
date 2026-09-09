@@ -1,0 +1,28 @@
+# Build output
+build/
+*.obj
+*.exe
+*.map
+*.pdb
+*.ilk
+
+# Logs
+*.log
+
+# Temp files
+/tmp/
+*.tmp
+mincs*.txt
+mincs*.log
+minlogger*.txt
+minlogger*.log
+minmain_marker.txt
+
+# Test images (generated locally)
+# test_images/  <- 保留，作为演示图片
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vs/
+.vscode/
