@@ -1,16 +1,15 @@
 #include "app.h"
 #include "config.h"
-#include "cli.h"
 #include "images/image_store.h"
 #include "ipc/pipe_server.h"
 #include "monitor/monitor_manager.h"
 #include "overlay/overlay_manager.h"
 #include "overlay/overlay_window.h"
 #include "util/logger.h"
-#include "util/text.h"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <cwchar>
 
 // RtlGetVersion 未随常规 SDK 头文件声明；手动原型（ntdll.dll 导出，文档化）
@@ -157,17 +156,78 @@ ipc::Response HandleIpcRequest(const ipc::Request& req)
 
 // ---------- 托盘 ----------
 
+// 菜单命令 ID 布局
+namespace menuid {
+constexpr int EnableAll      = 100; // 全部屏幕
+constexpr int Disable        = 101;
+constexpr int ToggleBlack    = 102; // 切换（纯黑）
+constexpr int PickImages     = 103; // 选择图片文件夹并启用幻灯片
+constexpr int ClearImages    = 104; // 恢复纯黑（清除图片库）
+constexpr int FirstMonitor   = 200; // 200 + 枚举序号：按屏幕启用
+constexpr int Status         = 300;
+constexpr int Exit           = 301;
+} // namespace menuid
+
+// 系统文件夹选择对话框；返回所选目录（取消/失败返回空）
+std::wstring PickFolderDialog(HWND owner)
+{
+    std::wstring result;
+    wchar_t path[MAX_PATH]{};
+
+    BROWSEINFOW bi{};
+    bi.hwndOwner      = owner;
+    bi.lpszTitle      = L"选择遮罩图片文件夹";
+    bi.ulFlags        = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_USENEWUI;
+    bi.lpfn           = nullptr;
+    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+    if (pidl)
+    {
+        if (SHGetPathFromIDListW(pidl, path))
+            result = path;
+        CoTaskMemFree(pidl);
+    }
+    return result;
+}
+
 void ShowTrayMenu(HWND hwnd)
 {
+    auto& mgr = overlay::GetManager();
+    const bool on  = mgr.state() == overlay::State::On;
+    const bool imgs = images::GetStore().HasImages();
+
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
-    const bool on = overlay::GetManager().state() == overlay::State::On;
 
-    AppendMenuW(menu, MF_STRING | (on ? MF_CHECKED : 0), 1, L"Enable Privacy");
-    AppendMenuW(menu, MF_STRING | (!on ? MF_CHECKED : 0), 2, L"Disable Privacy");
+    // ---- 屏幕选择（动态枚举当前显示器）----
+    AppendMenuW(menu, MF_STRING | (on ? MF_CHECKED : 0), menuid::EnableAll,
+                L"遮罩全部屏幕\tCtrl+Alt+Shift+B");
+    const auto monitors = monitor::Enumerate();
+    HMENU subMon = CreatePopupMenu();
+    if (subMon)
+    {
+        for (size_t i = 0; i < monitors.size(); ++i)
+        {
+            // 检查该屏当前是否有 overlay（只做展示，勾选状态以"ON 且目标匹配"近似）
+            std::wstring label = L"显示器 " + std::to_wstring(i + 1) +
+                                 L"  " + monitors[i].device;
+            if (monitors[i].primary)
+                label += L" [主]";
+            AppendMenuW(subMon, MF_STRING, menuid::FirstMonitor + static_cast<int>(i),
+                        label.c_str());
+        }
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(subMon), L"仅遮罩此屏幕…");
+    }
+
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, 3, L"Status");
-    AppendMenuW(menu, MF_STRING, 4, L"Exit");
+    AppendMenuW(menu, MF_STRING, menuid::PickImages,
+                imgs ? L"更换图片文件夹…" : L"选择图片文件夹（幻灯片模式）…");
+    AppendMenuW(menu, MF_STRING | (imgs ? MF_CHECKED : 0), menuid::ClearImages,
+                L"恢复纯黑");
+    AppendMenuW(menu, MF_STRING, menuid::Disable, L"关闭遮罩");
+
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, menuid::Status, L"状态");
+    AppendMenuW(menu, MF_STRING, menuid::Exit, L"退出\tCtrl+Alt+Shift+F10 紧急关闭");
 
     POINT pt{};
     GetCursorPos(&pt);
@@ -177,14 +237,52 @@ void ShowTrayMenu(HWND hwnd)
     PostMessageW(hwnd, WM_NULL, 0, 0);
     DestroyMenu(menu);
 
+    // ---- 处理选择 ----
+    if (cmd >= menuid::FirstMonitor &&
+        cmd < menuid::FirstMonitor + static_cast<int>(monitors.size()))
+    {
+        const auto& m = monitors[static_cast<size_t>(cmd - menuid::FirstMonitor)];
+        ipc::Request req;
+        req.kind        = ipc::Request::Kind::On;
+        req.monitorSpec = m.device;          // 按设备名启用该屏（保留当前图片库）
+        const ipc::Response r = HandleIpcRequest(req);
+        if (!r.ok) util::Logger::Instance().Error(L"tray monitor-select failed: " + r.text);
+        return;
+    }
+
     ipc::Request req;
     switch (cmd)
     {
-    case 1: req.kind = ipc::Request::Kind::On;     break;
-    case 2: req.kind = ipc::Request::Kind::Off;    break;
-    case 3: req.kind = ipc::Request::Kind::Status; break;
-    case 4: PostMessageW(hwnd, WM_CLOSE, 0, 0);    return;
-    default: return;
+    case menuid::EnableAll:
+        req.kind        = ipc::Request::Kind::On;
+        req.monitorSpec = L"all";
+        break;
+    case menuid::Disable:
+        req.kind = ipc::Request::Kind::Off;
+        break;
+    case menuid::ToggleBlack:
+        req.kind = ipc::Request::Kind::Toggle;
+        break;
+    case menuid::PickImages:
+    {
+        const std::wstring dir = PickFolderDialog(hwnd);
+        if (dir.empty()) return; // 用户取消
+        req.kind     = ipc::Request::Kind::Images;
+        req.imageDir = dir;
+        break;
+    }
+    case menuid::ClearImages:
+        req.kind = ipc::Request::Kind::Images;
+        req.imageDir.clear();
+        break;
+    case menuid::Status:
+        req.kind = ipc::Request::Kind::Status;
+        break;
+    case menuid::Exit:
+        PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        return;
+    default:
+        return;
     }
     const ipc::Response resp = HandleIpcRequest(req);
     if (!resp.ok)

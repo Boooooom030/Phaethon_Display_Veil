@@ -76,7 +76,7 @@ cl /nologo /W4 /WX /utf-8 /std:c++20 /O2 /MT ^
    /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX /D_WIN32_WINNT=0x0A00 ^
    %SOURCES% ^
    /Fe:build\PrivacyScreen.exe /Fo:build\ ^
-   /link user32.lib gdi32.lib shell32.lib advapi32.lib ntdll.lib gdiplus.lib ^
+   /link user32.lib gdi32.lib shell32.lib advapi32.lib ntdll.lib gdiplus.lib ole32.lib ^
    /SUBSYSTEM:WINDOWS /ENTRY:wmainCRTStartup /MAP:build\PrivacyScreen.map
 if errorlevel 1 exit /b 1
 echo [OK] build\PrivacyScreen.exe

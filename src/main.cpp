@@ -6,15 +6,11 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <cstdio>
 #include <string>
-
 #include "config.h"
 #include "app.h"
 #include "cli.h"
 #include "ipc/pipe_server.h"
-#include "monitor/monitor_manager.h"
-#include "overlay/overlay_manager.h"
 #include "util/logger.h"
 #include "util/text.h"
 
