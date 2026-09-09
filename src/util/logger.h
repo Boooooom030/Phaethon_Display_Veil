@@ -1,5 +1,5 @@
 #pragma once
-// logger.h — 线程安全文件日志（%LOCALAPPDATA%\SunshinePrivacyScreen\privacy-screen.log）
+// logger.h - thread-safe file log (%LOCALAPPDATA%\Phaethon\phaethon.log)
 #include <string>
 
 namespace util {

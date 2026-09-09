@@ -1,5 +1,5 @@
 #pragma once
-// config.h — 项目级常量与公共枚举
+// config.h - project constants and shared enums
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -10,13 +10,13 @@
 
 namespace cfg {
 
-constexpr wchar_t kMutexName[]         = L"Local\\SunshinePrivacyScreen.Singleton";
-constexpr wchar_t kPipeName[]          = L"\\\\.\\pipe\\SunshinePrivacyScreen";
-constexpr wchar_t kOverlayClassName[]  = L"SunshinePrivacyScreen.Overlay";
-constexpr wchar_t kMessageClassName[]  = L"SunshinePrivacyScreen.Message";
-constexpr wchar_t kLogDirName[]        = L"SunshinePrivacyScreen";
-constexpr wchar_t kLogFileName[]       = L"privacy-screen.log";
-constexpr wchar_t kAppTitle[]          = L"SunshinePrivacyScreen";
+constexpr wchar_t kMutexName[]         = L"Local\\Phaethon.Singleton";
+constexpr wchar_t kPipeName[]          = L"\\\\.\\pipe\\Phaethon";
+constexpr wchar_t kOverlayClassName[]  = L"Phaethon.Overlay";
+constexpr wchar_t kMessageClassName[]  = L"Phaethon.Message";
+constexpr wchar_t kLogDirName[]        = L"Phaethon";
+constexpr wchar_t kLogFileName[]       = L"phaethon.log";
+constexpr wchar_t kAppTitle[]          = L"Phaethon";
 
 // UI 线程自定义消息
 constexpr UINT kMsgIpcRequest   = WM_APP + 1;  // wParam = ipc::Request*
