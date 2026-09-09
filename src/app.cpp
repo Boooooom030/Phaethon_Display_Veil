@@ -167,7 +167,6 @@ constexpr int AllScreens     = 20;  // 子菜单：全部屏幕
 constexpr int FirstMonitor   = 100; // 100 + 枚举序号：单屏
 constexpr int PickImages     = 30;  // 选择图片文件夹
 constexpr int BackToBlack    = 31;  // 恢复纯黑
-constexpr int Status         = 40;
 constexpr int Exit           = 41;
 } // namespace menuid
 
@@ -262,11 +261,9 @@ void ShowTrayMenu(HWND hwnd)
     AppendMenuW(menu, MF_STRING, menuid::PickImages,
                 imgs ? i18n::Str(i18n::S::ChangeImages)
                      : i18n::Str(i18n::S::ChooseImages));
-    AppendMenuW(menu, MF_STRING | (imgs ? MF_CHECKED : 0), menuid::BackToBlack,
+    AppendMenuW(menu, MF_STRING, menuid::BackToBlack,
                 i18n::Str(i18n::S::BackToBlack));
 
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, menuid::Status, i18n::Str(i18n::S::Status));
     AppendMenuW(menu, MF_STRING, menuid::Exit,   i18n::Str(i18n::S::Exit));
 
     POINT pt{};
@@ -343,9 +340,6 @@ void ShowTrayMenu(HWND hwnd)
     case menuid::BackToBlack:
         req.kind = ipc::Request::Kind::Images;
         req.imageDir.clear();
-        break;
-    case menuid::Status:
-        req.kind = ipc::Request::Kind::Status;
         break;
     case menuid::Exit:
         PostMessageW(hwnd, WM_CLOSE, 0, 0);
