@@ -379,7 +379,7 @@ LRESULT CALLBACK MessageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         nid.hIcon            = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
         if (!nid.hIcon)
             nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-        wcsncpy_s(nid.szTip, i18n::Str(i18n::S::TrayTip), _TRUNCATE);
+        wcsncpy_s(nid.szTip, cfg::kAppTitle, _TRUNCATE);
         if (!Shell_NotifyIconW(NIM_ADD, &nid))
             log.Warn(L"Shell_NotifyIcon failed GLE=" + std::to_wstring(GetLastError()));
 
