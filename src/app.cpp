@@ -31,6 +31,9 @@ struct IpcPayload {
 // 消息窗口句柄（pipe server 线程需要）
 HWND g_serverHwnd = nullptr;
 
+// 用户在"选择屏幕"子菜单里预选的范围（OFF 状态下仅记住，待开关启用）
+std::wstring pendingSpec_;
+
 // ---------- IPC 请求处理（UI 线程） ----------
 
 ipc::Response HandleIpcRequest(const ipc::Request& req)
@@ -209,7 +212,8 @@ void ShowTrayMenu(HWND hwnd)
     HMENU subMon = CreatePopupMenu();
     if (subMon)
     {
-        AppendMenuW(subMon, MF_STRING | (mgr.IsAllCovered() ? MF_CHECKED : 0),
+        AppendMenuW(subMon, MF_STRING | (mgr.IsAllCovered() ||
+                                         (!on && pendingSpec_ == L"all") ? MF_CHECKED : 0),
                     menuid::AllScreens, i18n::Str(i18n::S::AllScreens));
         AppendMenuW(subMon, MF_SEPARATOR, 0, nullptr);
         for (size_t i = 0; i < monitors.size(); ++i)
@@ -220,7 +224,9 @@ void ShowTrayMenu(HWND hwnd)
             if (monitors[i].primary)
                 label += i18n::Str(i18n::S::PrimaryTag);
             AppendMenuW(subMon,
-                        MF_STRING | (mgr.IsCovered(monitors[i].device) ? MF_CHECKED : 0),
+                        MF_STRING | ((mgr.IsCovered(monitors[i].device) ||
+                                      (!on && pendingSpec_ == monitors[i].device))
+                                         ? MF_CHECKED : 0),
                         menuid::FirstMonitor + static_cast<int>(i), label.c_str());
         }
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(subMon),
@@ -247,22 +253,32 @@ void ShowTrayMenu(HWND hwnd)
     DestroyMenu(menu);
 
     // ---- 处理选择 ----
-    // 单屏选择：直接按设备名启用（保留图片库）
+    // 单屏选择：记住选择；若已开启则立即按新选择生效，否则仅选中待开关启用
     if (cmd >= menuid::FirstMonitor &&
         cmd < menuid::FirstMonitor + static_cast<int>(monitors.size()))
     {
         const auto& m = monitors[static_cast<size_t>(cmd - menuid::FirstMonitor)];
-        if (on && mgr.IsCovered(m.device) && !mgr.IsAllCovered())
+        if (on)
         {
-            // 已仅遮这块屏 → 再点一次 = 关闭
-            mgr.Disable(false);
-            return;
+            if (mgr.IsCovered(m.device) && !mgr.IsAllCovered())
+            {
+                // 已仅遮这块屏 → 再点一次 = 关闭
+                mgr.Disable(false);
+            }
+            else
+            {
+                ipc::Request req;
+                req.kind        = ipc::Request::Kind::On;
+                req.monitorSpec = m.device;
+                const ipc::Response r = HandleIpcRequest(req);
+                if (!r.ok) util::Logger::Instance().Error(L"tray monitor-select failed: " + r.text);
+            }
         }
-        ipc::Request req;
-        req.kind        = ipc::Request::Kind::On;
-        req.monitorSpec = m.device;
-        const ipc::Response r = HandleIpcRequest(req);
-        if (!r.ok) util::Logger::Instance().Error(L"tray monitor-select failed: " + r.text);
+        else
+        {
+            // 未开启：仅记住屏幕选择，待顶部开关启用
+            pendingSpec_ = m.device;
+        }
         return;
     }
 
@@ -273,16 +289,24 @@ void ShowTrayMenu(HWND hwnd)
         if (on) mgr.Disable(false);
         else
         {
-            const std::wstring spec = mgr.CurrentSpec().empty() ? L"all" : mgr.CurrentSpec();
+            const std::wstring spec = mgr.CurrentSpec().empty()
+                                          ? (pendingSpec_.empty() ? L"all" : pendingSpec_)
+                                          : mgr.CurrentSpec();
             const auto targets = monitor::Select(spec);
             if (!targets.empty())
                 mgr.Enable(targets, spec); // 失败时 Enable 内部已置 ERROR 并记日志
         }
         return; // 已处理
     case menuid::AllScreens:
-        req.kind        = ipc::Request::Kind::On;
-        req.monitorSpec = L"all";
-        break;
+        // 仅记住"全部屏幕"选择；若已开启则立即生效
+        pendingSpec_ = L"all";
+        if (on)
+        {
+            req.kind        = ipc::Request::Kind::On;
+            req.monitorSpec = L"all";
+            break;
+        }
+        return;
     case menuid::PickImages:
     {
         const std::wstring dir = PickFolderDialog(hwnd);
