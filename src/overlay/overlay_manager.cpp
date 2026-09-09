@@ -1,7 +1,5 @@
 #include "overlay_manager.h"
-#include "../config.h"
 #include "../util/logger.h"
-#include "../util/text.h"
 #include "overlay_window.h"
 
 namespace overlay {
