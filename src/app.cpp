@@ -171,24 +171,49 @@ constexpr int Status         = 40;
 constexpr int Exit           = 41;
 } // namespace menuid
 
-// 系统文件夹选择对话框；返回所选目录（取消/失败返回空）
+// 系统文件夹选择对话框（Vista+ IFileDialog，窗口大、可缩放、跟随 DPI）。
+// 返回所选目录（取消/失败返回空）。
 std::wstring PickFolderDialog(HWND owner)
 {
     std::wstring result;
-    wchar_t path[MAX_PATH]{};
 
-    BROWSEINFOW bi{};
-    bi.hwndOwner      = owner;
-    bi.lpszTitle      = i18n::Str(i18n::S::FolderDialogTitle);
-    bi.ulFlags        = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_USENEWUI;
-    bi.lpfn           = nullptr;
-    PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
-    if (pidl)
+    // 对话框需要 COM（STA）；本线程此前未初始化
+    const HRESULT hrInit = CoInitializeEx(nullptr,
+                                          COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool comInited = SUCCEEDED(hrInit);
+    if (!comInited && hrInit != RPC_E_CHANGED_MODE)
+        return result;
+
+    IFileOpenDialog* dlg = nullptr;
+    HRESULT hr = CoCreateInstance(__uuidof(FileOpenDialog), nullptr, CLSCTX_INPROC_SERVER,
+                                  __uuidof(IFileOpenDialog),
+                                  reinterpret_cast<void**>(&dlg));
+    if (SUCCEEDED(hr) && dlg)
     {
-        if (SHGetPathFromIDListW(pidl, path))
-            result = path;
-        CoTaskMemFree(pidl);
+        DWORD opts = 0;
+        dlg->GetOptions(&opts);
+        dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+        dlg->SetTitle(i18n::Str(i18n::S::FolderDialogTitle));
+
+        if (SUCCEEDED(dlg->Show(owner)))
+        {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(dlg->GetResult(&item)) && item)
+            {
+                PWSTR path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
+                {
+                    result = path;
+                    CoTaskMemFree(path);
+                }
+                item->Release();
+            }
+        }
+        dlg->Release();
     }
+
+    if (comInited)
+        CoUninitialize();
     return result;
 }
 
