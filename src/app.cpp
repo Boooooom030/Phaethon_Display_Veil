@@ -5,6 +5,7 @@
 #include "monitor/monitor_manager.h"
 #include "overlay/overlay_manager.h"
 #include "overlay/overlay_window.h"
+#include "util/i18n.h"
 #include "util/logger.h"
 #include <objidl.h>
 #include <gdiplus.h>
@@ -54,7 +55,7 @@ ipc::Response HandleIpcRequest(const ipc::Request& req)
                 break;
             }
         }
-        else
+        else if (req.imageDirSet)
         {
             images::GetStore().Clear();
         }
@@ -70,7 +71,7 @@ ipc::Response HandleIpcRequest(const ipc::Request& req)
         for (const auto& m : targets)
             log.Info(L"Target: " + monitor::Describe(m));
 
-        const auto report = mgr.Enable(targets);
+        const auto report = mgr.Enable(targets, req.monitorSpec);
         if (!report.success)
         {
             resp.ok   = false;
@@ -134,7 +135,7 @@ ipc::Response HandleIpcRequest(const ipc::Request& req)
                 resp.text = L"no monitors to cover";
                 break;
             }
-            const auto report = mgr.Enable(targets);
+            const auto report = mgr.Enable(targets, L"all");
             if (!report.success) { resp.ok = false; resp.text = report.error; }
         }
         break;
@@ -158,14 +159,13 @@ ipc::Response HandleIpcRequest(const ipc::Request& req)
 
 // 菜单命令 ID 布局
 namespace menuid {
-constexpr int EnableAll      = 100; // 全部屏幕
-constexpr int Disable        = 101;
-constexpr int ToggleBlack    = 102; // 切换（纯黑）
-constexpr int PickImages     = 103; // 选择图片文件夹并启用幻灯片
-constexpr int ClearImages    = 104; // 恢复纯黑（清除图片库）
-constexpr int FirstMonitor   = 200; // 200 + 枚举序号：按屏幕启用
-constexpr int Status         = 300;
-constexpr int Exit           = 301;
+constexpr int ToggleSwitch   = 10;  // 顶部开关：勾选=ON，点击=开/关
+constexpr int AllScreens     = 20;  // 子菜单：全部屏幕
+constexpr int FirstMonitor   = 100; // 100 + 枚举序号：单屏
+constexpr int PickImages     = 30;  // 选择图片文件夹
+constexpr int BackToBlack    = 31;  // 恢复纯黑
+constexpr int Status         = 40;
+constexpr int Exit           = 41;
 } // namespace menuid
 
 // 系统文件夹选择对话框；返回所选目录（取消/失败返回空）
@@ -176,7 +176,7 @@ std::wstring PickFolderDialog(HWND owner)
 
     BROWSEINFOW bi{};
     bi.hwndOwner      = owner;
-    bi.lpszTitle      = L"选择遮罩图片文件夹";
+    bi.lpszTitle      = i18n::Str(i18n::S::FolderDialogTitle);
     bi.ulFlags        = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_USENEWUI;
     bi.lpfn           = nullptr;
     PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
@@ -192,42 +192,51 @@ std::wstring PickFolderDialog(HWND owner)
 void ShowTrayMenu(HWND hwnd)
 {
     auto& mgr = overlay::GetManager();
-    const bool on  = mgr.state() == overlay::State::On;
+    const bool on   = mgr.state() == overlay::State::On;
     const bool imgs = images::GetStore().HasImages();
 
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
 
-    // ---- 屏幕选择（动态枚举当前显示器）----
-    AppendMenuW(menu, MF_STRING | (on ? MF_CHECKED : 0), menuid::EnableAll,
-                L"遮罩全部屏幕\tCtrl+Alt+Shift+B");
+    // ---- 顶部：单独的总开关 ----
+    AppendMenuW(menu, MF_STRING | (on ? MF_CHECKED : 0), menuid::ToggleSwitch,
+                i18n::Str(i18n::S::EnablePrivacy));
+
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+
+    // ---- 选择屏幕子菜单：全部屏幕 + 每屏一项（勾选显示当前覆盖状态）----
     const auto monitors = monitor::Enumerate();
     HMENU subMon = CreatePopupMenu();
     if (subMon)
     {
+        AppendMenuW(subMon, MF_STRING | (mgr.IsAllCovered() ? MF_CHECKED : 0),
+                    menuid::AllScreens, i18n::Str(i18n::S::AllScreens));
+        AppendMenuW(subMon, MF_SEPARATOR, 0, nullptr);
         for (size_t i = 0; i < monitors.size(); ++i)
         {
-            // 检查该屏当前是否有 overlay（只做展示，勾选状态以"ON 且目标匹配"近似）
-            std::wstring label = L"显示器 " + std::to_wstring(i + 1) +
+            std::wstring label = std::wstring(i18n::Str(i18n::S::MonitorPrefix)) +
+                                 std::to_wstring(i + 1) +
                                  L"  " + monitors[i].device;
             if (monitors[i].primary)
-                label += L" [主]";
-            AppendMenuW(subMon, MF_STRING, menuid::FirstMonitor + static_cast<int>(i),
-                        label.c_str());
+                label += i18n::Str(i18n::S::PrimaryTag);
+            AppendMenuW(subMon,
+                        MF_STRING | (mgr.IsCovered(monitors[i].device) ? MF_CHECKED : 0),
+                        menuid::FirstMonitor + static_cast<int>(i), label.c_str());
         }
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(subMon), L"仅遮罩此屏幕…");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(subMon),
+                    i18n::Str(i18n::S::SelectScreen));
     }
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, menuid::PickImages,
-                imgs ? L"更换图片文件夹…" : L"选择图片文件夹（幻灯片模式）…");
-    AppendMenuW(menu, MF_STRING | (imgs ? MF_CHECKED : 0), menuid::ClearImages,
-                L"恢复纯黑");
-    AppendMenuW(menu, MF_STRING, menuid::Disable, L"关闭遮罩");
+                imgs ? i18n::Str(i18n::S::ChangeImages)
+                     : i18n::Str(i18n::S::ChooseImages));
+    AppendMenuW(menu, MF_STRING | (imgs ? MF_CHECKED : 0), menuid::BackToBlack,
+                i18n::Str(i18n::S::BackToBlack));
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, menuid::Status, L"状态");
-    AppendMenuW(menu, MF_STRING, menuid::Exit, L"退出\tCtrl+Alt+Shift+F10 紧急关闭");
+    AppendMenuW(menu, MF_STRING, menuid::Status, i18n::Str(i18n::S::Status));
+    AppendMenuW(menu, MF_STRING, menuid::Exit,   i18n::Str(i18n::S::Exit));
 
     POINT pt{};
     GetCursorPos(&pt);
@@ -238,13 +247,20 @@ void ShowTrayMenu(HWND hwnd)
     DestroyMenu(menu);
 
     // ---- 处理选择 ----
+    // 单屏选择：直接按设备名启用（保留图片库）
     if (cmd >= menuid::FirstMonitor &&
         cmd < menuid::FirstMonitor + static_cast<int>(monitors.size()))
     {
         const auto& m = monitors[static_cast<size_t>(cmd - menuid::FirstMonitor)];
+        if (on && mgr.IsCovered(m.device) && !mgr.IsAllCovered())
+        {
+            // 已仅遮这块屏 → 再点一次 = 关闭
+            mgr.Disable(false);
+            return;
+        }
         ipc::Request req;
         req.kind        = ipc::Request::Kind::On;
-        req.monitorSpec = m.device;          // 按设备名启用该屏（保留当前图片库）
+        req.monitorSpec = m.device;
         const ipc::Response r = HandleIpcRequest(req);
         if (!r.ok) util::Logger::Instance().Error(L"tray monitor-select failed: " + r.text);
         return;
@@ -253,15 +269,19 @@ void ShowTrayMenu(HWND hwnd)
     ipc::Request req;
     switch (cmd)
     {
-    case menuid::EnableAll:
+    case menuid::ToggleSwitch:
+        if (on) mgr.Disable(false);
+        else
+        {
+            const std::wstring spec = mgr.CurrentSpec().empty() ? L"all" : mgr.CurrentSpec();
+            const auto targets = monitor::Select(spec);
+            if (!targets.empty())
+                mgr.Enable(targets, spec); // 失败时 Enable 内部已置 ERROR 并记日志
+        }
+        return; // 已处理
+    case menuid::AllScreens:
         req.kind        = ipc::Request::Kind::On;
         req.monitorSpec = L"all";
-        break;
-    case menuid::Disable:
-        req.kind = ipc::Request::Kind::Off;
-        break;
-    case menuid::ToggleBlack:
-        req.kind = ipc::Request::Kind::Toggle;
         break;
     case menuid::PickImages:
     {
@@ -271,7 +291,7 @@ void ShowTrayMenu(HWND hwnd)
         req.imageDir = dir;
         break;
     }
-    case menuid::ClearImages:
+    case menuid::BackToBlack:
         req.kind = ipc::Request::Kind::Images;
         req.imageDir.clear();
         break;
@@ -313,7 +333,7 @@ LRESULT CALLBACK MessageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         nid.uFlags           = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         nid.uCallbackMessage = cfg::kMsgTrayCallback;
         nid.hIcon            = LoadIconW(nullptr, IDI_APPLICATION);
-        wcsncpy_s(nid.szTip, cfg::kAppTitle, _TRUNCATE);
+        wcsncpy_s(nid.szTip, i18n::Str(i18n::S::TrayTip), _TRUNCATE);
         if (!Shell_NotifyIconW(NIM_ADD, &nid))
             log.Warn(L"Shell_NotifyIcon failed GLE=" + std::to_wstring(GetLastError()));
 
@@ -399,6 +419,7 @@ int RunServer(bool ddaFallback, bool debug)
 {
     auto& log = util::Logger::Instance();
     log.Init(debug);
+    i18n::Init();
     overlay::GetManager().SetDdaFallback(ddaFallback);
 
     // GDI+：图片模式需要（进程生命周期内一次性初始化）
