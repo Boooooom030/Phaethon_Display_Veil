@@ -1,5 +1,5 @@
 #pragma once
-// pipe_server.h — Named Pipe server（\\.\pipe\SunshinePrivacyScreen，文本协议）
+// pipe_server.h - named pipe server (\\.\pipe\Phaethon, text protocol)
 // 协议（UTF-8，一行一命令）：ON / OFF / TOGGLE / STATUS / EXIT（大小写不敏感）
 // 响应：第一行 "OK" 或 "ERR ..."；STATUS 时随后为状态文本（UTF-8，\n 分隔）
 #include <string>

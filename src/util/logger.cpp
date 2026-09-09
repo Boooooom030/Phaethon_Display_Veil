@@ -1,4 +1,5 @@
 #include "logger.h"
+#include "../config.h"
 #include "text.h"
 #include <cstdlib>
 #include <cwchar>
@@ -23,9 +24,9 @@ std::wstring LogFilePath()
             dir = std::wstring(path) + L"\\AppData\\Local";
     }
     if (dir.empty()) dir = L".";
-    dir += L"\\" + std::wstring(L"SunshinePrivacyScreen");
+    dir += L"\\" + std::wstring(cfg::kLogDirName);
     CreateDirectoryW(dir.c_str(), nullptr);
-    return dir + L"\\privacy-screen.log";
+    return dir + L"\\" + std::wstring(cfg::kLogFileName);
 }
 } // namespace
 

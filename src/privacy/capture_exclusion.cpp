@@ -6,7 +6,7 @@ namespace privacy {
 
 namespace {
 
-// WCA_EXCLUDED_FROM_DDA = 24：阻止窗口进入 Desktop Duplication API。
+// WCA_EXCLUDED_FROM_DDA = 24: keeps a window out of the Desktop Duplication API.
 // Undocumented attribute; resolved dynamically. Optional extra layer for
 // ddx capture, never the primary mechanism.
 constexpr DWORD kWcaExcludedFromDda = 24;
