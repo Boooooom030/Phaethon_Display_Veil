@@ -1,0 +1,4 @@
+// app.rc - version-free resource script; embeds the application icon
+#include <windows.h>
+
+IDI_APPLICATION ICON "icon.ico"

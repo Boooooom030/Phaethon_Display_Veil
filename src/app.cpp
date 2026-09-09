@@ -1,3 +1,4 @@
+// app.cpp - background server instance: message loop, hotkeys, tray, IPC wiring
 #include "app.h"
 #include "config.h"
 #include "images/image_store.h"
@@ -13,7 +14,8 @@
 #include <shlobj.h>
 #include <cwchar>
 
-// RtlGetVersion 未随常规 SDK 头文件声明；手动原型（ntdll.dll 导出，文档化）
+// RtlGetVersion is not declared in the shipped SDK headers; documented
+// ntdll.dll export, prototype declared manually.
 extern "C" LONG NTAPI RtlGetVersion(PRTL_OSVERSIONINFOW lpVersionInformation);
 
 namespace app {
@@ -22,19 +24,19 @@ namespace {
 
 constexpr UINT kTrayUid = 0x5053; // "PS"
 
-// IPC 请求 → UI 线程同步执行的载荷（kMsgIpcRequest 的 lParam）
+// IPC request carried as kMsgIpcRequest wParam
 struct IpcPayload {
     ipc::Sync*     sync;
     ipc::Request   req;
 };
 
-// 消息窗口句柄（pipe server 线程需要）
+// Hidden message window handle; also used by the pipe server thread
 HWND g_serverHwnd = nullptr;
 
-// 用户在"选择屏幕"子菜单里预选的范围（OFF 状态下仅记住，待开关启用）
+// Screen range pre-selected in the tray submenu while OFF (applied by the toggle)
 std::wstring pendingSpec_;
 
-// ---------- IPC 请求处理（UI 线程） ----------
+// ---------- IPC request handling (UI thread) ----------
 
 ipc::Response HandleIpcRequest(const ipc::Request& req)
 {
@@ -46,7 +48,7 @@ ipc::Response HandleIpcRequest(const ipc::Request& req)
     {
     case ipc::Request::Kind::On:
     {
-        // 图片目录（可空 = 纯黑模式）
+        // Image folder (empty = plain black)
         if (!req.imageDir.empty())
         {
             const size_t n = images::GetStore().SetDir(req.imageDir);
@@ -79,13 +81,12 @@ ipc::Response HandleIpcRequest(const ipc::Request& req)
         {
             resp.ok   = false;
             resp.text = report.error;
-            // fail-safe：状态已置 ERROR，黑窗绝不残留；off/热键仍可恢复
         }
         break;
     }
     case ipc::Request::Kind::Images:
     {
-        // 运行中切换图片库；ON 状态下立即重绘
+        // Hot-swap the image library; redraw immediately while ON
         size_t n = 0;
         if (req.imageDir.empty())
         {
@@ -112,7 +113,7 @@ ipc::Response HandleIpcRequest(const ipc::Request& req)
 
     case ipc::Request::Kind::Toggle:
     {
-        // toggle 可带 --images：若 ON 中则只换图源，否则开关
+        // toggle --images while ON only swaps the image source
         if (!req.imageDir.empty() && mgr.state() == overlay::State::On)
         {
             const size_t n = images::GetStore().SetDir(req.imageDir);
@@ -158,25 +159,24 @@ ipc::Response HandleIpcRequest(const ipc::Request& req)
     return resp;
 }
 
-// ---------- 托盘 ----------
+// ---------- Tray ----------
 
-// 菜单命令 ID 布局
 namespace menuid {
-constexpr int ToggleSwitch   = 10;  // 顶部开关：勾选=ON，点击=开/关
-constexpr int AllScreens     = 20;  // 子菜单：全部屏幕
-constexpr int FirstMonitor   = 100; // 100 + 枚举序号：单屏
-constexpr int PickImages     = 30;  // 选择图片文件夹
-constexpr int BackToBlack    = 31;  // 恢复纯黑
+constexpr int ToggleSwitch   = 10;  // top-level switch: checked = ON
+constexpr int AllScreens     = 20;  // submenu entry
+constexpr int FirstMonitor   = 100; // 100 + enumeration index
+constexpr int PickImages     = 30;  // choose image folder
+constexpr int BackToBlack    = 31;  // clear image library
 constexpr int Exit           = 41;
 } // namespace menuid
 
-// 系统文件夹选择对话框（Vista+ IFileDialog，窗口大、可缩放、跟随 DPI）。
-// 返回所选目录（取消/失败返回空）。
+// Vista+ IFileDialog folder picker (resizable, DPI-aware).
+// Returns the selected directory, empty on cancel/failure.
 std::wstring PickFolderDialog(HWND owner)
 {
     std::wstring result;
 
-    // 对话框需要 COM（STA）；本线程此前未初始化
+    // The dialog requires COM (STA) on this thread
     const HRESULT hrInit = CoInitializeEx(nullptr,
                                           COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     const bool comInited = SUCCEEDED(hrInit);
@@ -225,13 +225,14 @@ void ShowTrayMenu(HWND hwnd)
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
 
-    // ---- 顶部：单独的总开关 ----
+    // Top-level switch
     AppendMenuW(menu, MF_STRING | (on ? MF_CHECKED : 0), menuid::ToggleSwitch,
                 i18n::Str(i18n::S::EnablePrivacy));
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    // ---- 选择屏幕子菜单：全部屏幕 + 每屏一项（勾选显示当前覆盖状态）----
+    // Screen submenu: All screens + one entry per monitor, check state
+    // reflects the covered range (or the pre-selection while OFF)
     const auto monitors = monitor::Enumerate();
     HMENU subMon = CreatePopupMenu();
     if (subMon)
@@ -268,14 +269,14 @@ void ShowTrayMenu(HWND hwnd)
 
     POINT pt{};
     GetCursorPos(&pt);
-    SetForegroundWindow(hwnd); // 托盘菜单显示的 Win32 惯例
+    // Foreground transfer is required for TrackPopupMenu to dismiss correctly
+    SetForegroundWindow(hwnd);
     const int cmd = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_RETURNCMD,
                                    pt.x, pt.y, 0, hwnd, nullptr);
     PostMessageW(hwnd, WM_NULL, 0, 0);
     DestroyMenu(menu);
 
-    // ---- 处理选择 ----
-    // 单屏选择：记住选择；若已开启则立即按新选择生效，否则仅选中待开关启用
+    // Per-monitor entry: remember the choice; apply immediately while ON
     if (cmd >= menuid::FirstMonitor &&
         cmd < menuid::FirstMonitor + static_cast<int>(monitors.size()))
     {
@@ -284,7 +285,7 @@ void ShowTrayMenu(HWND hwnd)
         {
             if (mgr.IsCovered(m.device) && !mgr.IsAllCovered())
             {
-                // 已仅遮这块屏 → 再点一次 = 关闭
+                // Clicking the only covered monitor again turns it off
                 mgr.Disable(false);
             }
             else
@@ -298,7 +299,7 @@ void ShowTrayMenu(HWND hwnd)
         }
         else
         {
-            // 未开启：仅记住屏幕选择，待顶部开关启用
+            // OFF: remember the selection, applied by the top-level switch
             pendingSpec_ = m.device;
         }
         return;
@@ -316,11 +317,11 @@ void ShowTrayMenu(HWND hwnd)
                                           : mgr.CurrentSpec();
             const auto targets = monitor::Select(spec);
             if (!targets.empty())
-                mgr.Enable(targets, spec); // 失败时 Enable 内部已置 ERROR 并记日志
+                mgr.Enable(targets, spec); // on failure state becomes ERROR, logged inside
         }
-        return; // 已处理
+        return;
     case menuid::AllScreens:
-        // 仅记住"全部屏幕"选择；若已开启则立即生效
+        // Remember the selection; apply immediately while ON
         pendingSpec_ = L"all";
         if (on)
         {
@@ -332,7 +333,7 @@ void ShowTrayMenu(HWND hwnd)
     case menuid::PickImages:
     {
         const std::wstring dir = PickFolderDialog(hwnd);
-        if (dir.empty()) return; // 用户取消
+        if (dir.empty()) return; // canceled
         req.kind     = ipc::Request::Kind::Images;
         req.imageDir = dir;
         break;
@@ -352,7 +353,7 @@ void ShowTrayMenu(HWND hwnd)
         util::Logger::Instance().Error(L"tray command failed: " + resp.text);
 }
 
-// ---------- 隐藏消息窗口的 WindowProc ----------
+// ---------- Hidden message window ----------
 
 LRESULT CALLBACK MessageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -375,7 +376,9 @@ LRESULT CALLBACK MessageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         nid.uID              = kTrayUid;
         nid.uFlags           = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         nid.uCallbackMessage = cfg::kMsgTrayCallback;
-        nid.hIcon            = LoadIconW(nullptr, IDI_APPLICATION);
+        nid.hIcon            = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
+        if (!nid.hIcon)
+            nid.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
         wcsncpy_s(nid.szTip, i18n::Str(i18n::S::TrayTip), _TRUNCATE);
         if (!Shell_NotifyIconW(NIM_ADD, &nid))
             log.Warn(L"Shell_NotifyIcon failed GLE=" + std::to_wstring(GetLastError()));
@@ -387,7 +390,7 @@ LRESULT CALLBACK MessageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
     case cfg::kMsgIpcRequest:
     {
-        // pipe_server 以 WPARAM 投递 PendingRequest*
+        // pipe_server posts PendingRequest* in wParam
         auto* p = reinterpret_cast<ipc::PendingRequest*>(wParam);
         if (p)
         {
@@ -412,7 +415,7 @@ LRESULT CALLBACK MessageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         else if (wParam == cfg::kHotkeyIdPanic)
         {
-            overlay::GetManager().Disable(true); // 紧急无条件关闭
+            overlay::GetManager().Disable(true); // unconditional shutdown
         }
         return 0;
 
@@ -421,7 +424,7 @@ LRESULT CALLBACK MessageWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             overlay::GetManager().Reassert();
         else if (wParam == cfg::kTimerSlideId)
         {
-            // 幻灯片：仅在 ON + 图片模式时切换
+            // Slideshow: only advance while ON with more than one image
             if (overlay::GetManager().state() == overlay::State::On &&
                 images::GetStore().HasImages() && images::GetStore().Count() > 1)
             {
@@ -465,13 +468,13 @@ int RunServer(bool ddaFallback, bool debug)
     i18n::Init();
     overlay::GetManager().SetDdaFallback(ddaFallback);
 
-    // GDI+：图片模式需要（进程生命周期内一次性初始化）
+    // GDI+ for image mode; black-only mode still works if this fails
     Gdiplus::GdiplusStartupInput gdiStartup{};
     ULONG_PTR gdiToken = 0;
     if (Gdiplus::GdiplusStartup(&gdiToken, &gdiStartup, nullptr) != Gdiplus::Ok)
         log.Warn(L"GdiplusStartup failed; image mode unavailable (black overlay still works)");
 
-    // 版本检查：WDA_EXCLUDEFROMCAPTURE 需要 Win10 2004 (build 19041)+
+    // WDA_EXCLUDEFROMCAPTURE requires Windows 10 2004 (build 19041)+
     RTL_OSVERSIONINFOW v{};
     v.dwOSVersionInfoSize = sizeof(v);
     if (RtlGetVersion(&v) != 0 || v.dwBuildNumber < cfg::kMinOsBuild)
@@ -483,18 +486,20 @@ int RunServer(bool ddaFallback, bool debug)
     }
     log.Info(L"Windows build " + std::to_wstring(v.dwBuildNumber) + L" OK");
 
-    // DPI：任何窗口创建之前
+    // Must precede any window creation
     if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2))
         log.Warn(L"SetProcessDpiAwarenessContext failed GLE=" +
                  std::to_wstring(GetLastError()));
     else
         log.Info(L"DPI awareness: PER_MONITOR_AWARE_V2");
 
-    // 消息窗口类
+    // Message-only window class
     WNDCLASSEXW wc{};
     wc.cbSize        = sizeof(wc);
     wc.lpfnWndProc   = MessageWndProc;
     wc.hInstance     = GetModuleHandleW(nullptr);
+    wc.hIcon         = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
+    wc.hIconSm       = wc.hIcon;
     wc.lpszClassName = cfg::kMessageClassName;
     if (!RegisterClassExW(&wc))
     {
@@ -502,7 +507,7 @@ int RunServer(bool ddaFallback, bool debug)
         return static_cast<int>(cfg::ExitCode::GeneralError);
     }
 
-    // overlay 窗口类（黑色背景 + 自绘 WndProc）
+    // Overlay window class (black background + custom WndProc)
     {
         WNDCLASSEXW owc{};
         owc.cbSize        = sizeof(owc);
@@ -518,7 +523,6 @@ int RunServer(bool ddaFallback, bool debug)
         }
     }
 
-    // 隐藏消息窗口（不显示、不进任务栏）
     const HWND hwnd = CreateWindowExW(
         0, cfg::kMessageClassName, cfg::kAppTitle,
         0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
@@ -529,7 +533,6 @@ int RunServer(bool ddaFallback, bool debug)
     }
     g_serverHwnd = hwnd;
 
-    // IPC server
     if (!ipc::StartServer(hwnd,
                           [](const std::wstring& err) {
                               util::Logger::Instance().Error(err);

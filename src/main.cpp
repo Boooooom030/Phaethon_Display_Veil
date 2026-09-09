@@ -1,4 +1,4 @@
-// main.cpp — 入口：单实例判定、CLI 分发（后台 server / 控制客户端）
+// main.cpp - entry point: single-instance check, CLI dispatch
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -36,7 +36,7 @@ int RunClient(const cli::Parsed& p)
     std::wstring resp;
     if (!ipc::SendCommand(req, 3000, ok, resp))
     {
-        // 管道不通：后台实例未运行
+        // Pipe not reachable: background instance not running
         util::ConsoleOut(L"[ERROR] background instance not running (" + resp + L")");
         return static_cast<int>(cfg::ExitCode::NoServer);
     }
@@ -44,7 +44,7 @@ int RunClient(const cli::Parsed& p)
     if (!ok)
     {
         util::ConsoleOut(L"[ERROR] " + resp);
-        // monitor 未找到 → 4；capture exclusion → 3；其余 → 1
+        // monitor not found -> 4; capture exclusion -> 3; otherwise -> 1
         if (resp.find(L"monitor not found") != std::wstring::npos)
             return static_cast<int>(cfg::ExitCode::MonitorNotFound);
         if (resp.find(L"SetWindowDisplayAffinity") != std::wstring::npos ||
@@ -62,19 +62,19 @@ int RunClient(const cli::Parsed& p)
     return static_cast<int>(cfg::ExitCode::Ok);
 }
 
-// 尝试启动后台 server（分离进程，不随本进程退出）。
-// 成功返回 true；已有实例在跑返回 true（幂等）；启动失败返回 false。
+// Start the background server as a detached process when not running.
+// Idempotent: returns true if the server is already up.
 bool EnsureServerRunning(const cli::Parsed& p)
 {
     HANDLE mutex = CreateMutexW(nullptr, TRUE, cfg::kMutexName);
     if (mutex && GetLastError() == ERROR_ALREADY_EXISTS)
     {
         CloseHandle(mutex);
-        return true; // server 已在跑
+        return true; // already running
     }
     if (mutex) CloseHandle(mutex);
 
-    // 以自身路径分离启动（CREATE_NEW_PROCESS_GROUP | DETACHED，不阻塞本进程）
+    // Re-launch self, detached from this process
     wchar_t exePath[MAX_PATH]{};
     if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH))
         return false;
@@ -94,7 +94,7 @@ bool EnsureServerRunning(const cli::Parsed& p)
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
 
-    // 等待管道就绪（server 初始化一般 < 200ms，上限 5s）
+    // Wait for the pipe (server startup is usually < 200 ms, cap at 5 s)
     for (int i = 0; i < 50; ++i)
     {
         if (WaitNamedPipeW(cfg::kPipeName, 100))
@@ -111,7 +111,6 @@ bool EnsureServerRunning(const cli::Parsed& p)
 
 int wmain(int argc, wchar_t* argv[])
 {
-    // 1) 解析命令行
     const cli::Parsed p = cli::Parse(argc > 1 ? const_cast<const wchar_t* const*>(argv + 1)
                                               : nullptr, argc > 1 ? argc - 1 : 0);
     if (p.hasError)
@@ -120,13 +119,13 @@ int wmain(int argc, wchar_t* argv[])
         return static_cast<int>(cfg::ExitCode::GeneralError);
     }
 
-    // 2) 单实例：已有 server 在跑 → 本进程只能作为控制客户端
+    // Single instance: an existing server makes this process a client
     HANDLE mutex = CreateMutexW(nullptr, TRUE, cfg::kMutexName);
     const bool serverOwner = mutex && GetLastError() != ERROR_ALREADY_EXISTS;
 
     if (!p.hasCommand)
     {
-        // 无命令：想启动后台 server
+        // No command: start the background server
         if (!serverOwner)
         {
             util::ConsoleOut(L"[INFO] background instance already running; nothing to start.");
@@ -138,13 +137,13 @@ int wmain(int argc, wchar_t* argv[])
             util::ConsoleOut(L"[ERROR] CreateMutex failed GLE=" + std::to_wstring(GetLastError()));
             return static_cast<int>(cfg::ExitCode::GeneralError);
         }
-        // 持有互斥体启动 server（到进程退出为止）
+        // Hold the mutex for the lifetime of the server
         const int rc = app::RunServer(p.ddaFallback, p.debug);
         CloseHandle(mutex);
         return rc;
     }
 
-    // 3) 有命令：作为控制客户端；server 未运行且命令需要生效时先拉起 server
+    // Command: run as a client; start the server first if needed
     if (mutex) CloseHandle(mutex);
 
     const bool needsServer =
