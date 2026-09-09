@@ -1,7 +1,6 @@
 @echo off
 rem build.bat - MSVC one-shot build (x64, /W4 /WX, /MT, C++20)
-rem usage: build.bat        -> build full app
-rem        build.bat spike  -> build spike only
+rem usage: build.bat -> build\Phaethon.exe
 setlocal enabledelayedexpansion
 
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -28,51 +27,6 @@ if exist src\app.rc (
     set "RES_OBJ=build\app.res"
 )
 
-if "%~1"=="spike" (
-    cl /nologo /W4 /WX /utf-8 /std:c++20 /O2 /MT ^
-       spike\spike.cpp ^
-       /Fe:build\spike.exe /Fo:build\spike.obj ^
-       /link user32.lib gdi32.lib /SUBSYSTEM:CONSOLE
-    if errorlevel 1 exit /b 1
-    echo [OK] build\spike.exe
-    exit /b 0
-)
-
-if "%~1"=="min" (
-    cl /nologo /W4 /WX /utf-8 /std:c++20 /O2 /MT ^
-       spike\minmain.cpp ^
-       /Fe:build\minmain.exe /Fo:build\minmain.obj ^
-       /link /SUBSYSTEM:WINDOWS /ENTRY:wmainCRTStartup
-    if errorlevel 1 exit /b 1
-    echo [OK] build\minmain.exe
-    exit /b 0
-)
-
-if "%~1"=="dump" (
-    link /dump /imports build\PrivacyScreen.exe | findstr /i ".dll"
-    exit /b 0
-)
-
-if "%~1"=="minlogger" (
-    cl /nologo /W4 /WX /utf-8 /std:c++20 /O2 /MT ^
-       spike\minlogger.cpp ^
-       /Fe:build\minlogger.exe /Fo:build\minlogger.obj ^
-       /link /SUBSYSTEM:WINDOWS /ENTRY:wmainCRTStartup
-    if errorlevel 1 exit /b 1
-    echo [OK] build\minlogger.exe
-    exit /b 0
-)
-
-if "%~1"=="mincs" (
-    cl /nologo /W4 /WX /utf-8 /std:c++20 /O2 /MT /MAP:build\mincs.map ^
-       spike\mincs.cpp ^
-       /Fe:build\mincs.exe /Fo:build\mincs.obj ^
-       /link /SUBSYSTEM:WINDOWS /ENTRY:wmainCRTStartup
-    if errorlevel 1 exit /b 1
-    echo [OK] build\mincs.exe
-    exit /b 0
-)
-
 set "SOURCES="
 for %%f in (src\*.cpp src\ipc\*.cpp src\monitor\*.cpp src\overlay\*.cpp src\privacy\*.cpp src\util\*.cpp src\images\*.cpp) do set "SOURCES=!SOURCES! %%f"
 if not defined SOURCES (
@@ -83,9 +37,9 @@ if not defined SOURCES (
 cl /nologo /W4 /WX /utf-8 /std:c++20 /O2 /MT ^
    /DUNICODE /D_UNICODE /DWIN32_LEAN_AND_MEAN /DNOMINMAX /D_WIN32_WINNT=0x0A00 ^
    %SOURCES% %RES_OBJ% ^
-   /Fe:build\PrivacyScreen.exe /Fo:build\ ^
+   /Fe:build\Phaethon.exe /Fo:build\ ^
    /link user32.lib gdi32.lib shell32.lib advapi32.lib ntdll.lib gdiplus.lib ole32.lib ^
-   /SUBSYSTEM:WINDOWS /ENTRY:wmainCRTStartup /MAP:build\PrivacyScreen.map
+   /SUBSYSTEM:WINDOWS /ENTRY:wmainCRTStartup
 if errorlevel 1 exit /b 1
-echo [OK] build\PrivacyScreen.exe
+echo [OK] build\Phaethon.exe
 endlocal
