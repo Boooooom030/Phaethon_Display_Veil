@@ -26,7 +26,10 @@ public:
     };
 
     // 开启：枚举 monitors -> 逐个创建 overlay -> 任一失败则全部回滚
-    EnableReport Enable(const std::vector<monitor::MonitorInfo>& targets);
+    // spec: 本次启用的显示器选择器（"all"/"primary"/序号/设备名），记录用于
+    //       显示变化重建与托盘勾选状态
+    EnableReport Enable(const std::vector<monitor::MonitorInfo>& targets,
+                        const std::wstring& spec);
 
     // 关闭全部 overlay（幂等；emergency=true 时即使状态机认为已关闭也强制执行）
     void Disable(bool emergency = false);
@@ -39,6 +42,15 @@ public:
 
     // 广播重绘（图片切换 / 图片库变更后调用）；仅在 ON 状态有意义
     void InvalidateAllOverlays();
+
+    // 当前生效的显示器选择器（"all"/设备名…），供托盘菜单勾选与开关复用
+    std::wstring CurrentSpec() const;
+
+    // 当前是否处于 ON 且覆盖全部屏幕
+    bool IsAllCovered() const;
+
+    // 当前是否处于 ON 且覆盖指定设备（\\.\DISPLAYn，大小写不敏感）
+    bool IsCovered(const std::wstring& device) const;
 
     // status 文本（多行）
     std::wstring StatusText() const;

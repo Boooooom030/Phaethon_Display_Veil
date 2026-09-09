@@ -51,6 +51,7 @@ void HandleOneClient(HANDLE pipe)
         {
             req.monitorSpec = util::Trim(rest.substr(0, imgPos));
             req.imageDir    = util::Trim(rest.substr(imgPos + 4));
+            req.imageDirSet = true;
             if (req.monitorSpec.empty())
                 req.monitorSpec = L"all";
         }

@@ -1,5 +1,7 @@
 #include "overlay_manager.h"
+#include "../config.h"
 #include "../util/logger.h"
+#include "../util/text.h"
 #include "overlay_window.h"
 
 namespace overlay {
@@ -46,7 +48,8 @@ void Manager::DestroyAllLocked()
     overlays_.clear();
 }
 
-Manager::EnableReport Manager::Enable(const std::vector<monitor::MonitorInfo>& targets)
+Manager::EnableReport Manager::Enable(const std::vector<monitor::MonitorInfo>& targets,
+                                      const std::wstring& spec)
 {
     EnterCriticalSection(&Cs());
     EnableReport report;
@@ -99,6 +102,7 @@ Manager::EnableReport Manager::Enable(const std::vector<monitor::MonitorInfo>& t
 
     overlays_     = created;
     lastTargets_  = targets;
+    spec_         = spec.empty() ? L"all" : spec;
     wantOn_       = true;
     state_        = State::On;
     report.success  = true;
@@ -138,9 +142,10 @@ void Manager::HandleDisplayChange()
         LeaveCriticalSection(&Cs());
         return;
     }
+    const std::wstring spec = spec_; // 记住用户选择，重建时沿用
     util::Logger::Instance().Info(L"Display change: rebuilding overlays");
     DestroyAllLocked();
-    const auto targets = monitor::Select(spec_);
+    const auto targets = monitor::Select(spec);
     if (targets.empty())
     {
         lastError_ = L"display change: no monitors matched";
@@ -206,6 +211,42 @@ void Manager::InvalidateAllOverlays()
         if (hwnd && IsWindow(hwnd))
             InvalidateRect(hwnd, nullptr, FALSE);
     LeaveCriticalSection(&Cs());
+}
+
+std::wstring Manager::CurrentSpec() const
+{
+    EnterCriticalSection(&Cs());
+    const std::wstring s = (state_ == State::On) ? spec_ : std::wstring();
+    LeaveCriticalSection(&Cs());
+    return s;
+}
+
+bool Manager::IsAllCovered() const
+{
+    EnterCriticalSection(&Cs());
+    const bool all = (state_ == State::On) && (spec_ == L"all");
+    LeaveCriticalSection(&Cs());
+    return all;
+}
+
+bool Manager::IsCovered(const std::wstring& device) const
+{
+    EnterCriticalSection(&Cs());
+    bool cov = false;
+    if (state_ == State::On)
+    {
+        if (spec_ == L"all") cov = true;
+        else
+        {
+            const std::wstring dev = util::ToLower(device);
+            const std::wstring sp  = util::ToLower(spec_);
+            cov = (sp == dev) ||
+                  (sp.size() <= dev.size() &&
+                   dev.compare(dev.size() - sp.size(), sp.size(), sp) == 0);
+        }
+    }
+    LeaveCriticalSection(&Cs());
+    return cov;
 }
 
 void Manager::OnOverlayDestroyed(HWND hwnd)

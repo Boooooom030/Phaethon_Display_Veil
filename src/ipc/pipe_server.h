@@ -11,6 +11,7 @@ struct Request {
     enum class Kind { On, Off, Toggle, Status, Exit, Images } kind = Kind::Status;
     std::wstring monitorSpec;     // 仅 ON 有效（管道协议未携带时为 "all"）
     std::wstring imageDir;        // ON / IMAGES 有效；空 = 纯黑模式
+    bool         imageDirSet = false; // ON 时显式携带了 IMG（区分"未带"与"清空"）
     bool         ddaFallback = false;
 };
 
