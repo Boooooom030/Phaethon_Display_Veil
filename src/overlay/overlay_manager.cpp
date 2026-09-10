@@ -225,7 +225,12 @@ std::wstring Manager::CurrentSpec() const
 bool Manager::IsAllCovered() const
 {
     EnterCriticalSection(&Cs());
-    const bool all = (state_ == State::On) && (spec_ == L"all");
+    bool all = false;
+    if (state_ == State::On && !lastTargets_.empty())
+    {
+        // Covers every monitor currently attached
+        all = (lastTargets_.size() == monitor::Enumerate().size());
+    }
     LeaveCriticalSection(&Cs());
     return all;
 }
@@ -236,14 +241,12 @@ bool Manager::IsCovered(const std::wstring& device) const
     bool cov = false;
     if (state_ == State::On)
     {
-        if (spec_ == L"all") cov = true;
-        else
+        // Compare against the monitors actually covered, so any selector form
+        // (index, "primary", device name, "all") is handled correctly
+        const std::wstring dev = util::ToLower(device);
+        for (const auto& m : lastTargets_)
         {
-            const std::wstring dev = util::ToLower(device);
-            const std::wstring sp  = util::ToLower(spec_);
-            cov = (sp == dev) ||
-                  (sp.size() <= dev.size() &&
-                   dev.compare(dev.size() - sp.size(), sp.size(), sp) == 0);
+            if (util::ToLower(m.device) == dev) { cov = true; break; }
         }
     }
     LeaveCriticalSection(&Cs());

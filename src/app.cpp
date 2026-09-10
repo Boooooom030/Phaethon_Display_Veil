@@ -33,8 +33,9 @@ struct IpcPayload {
 // Hidden message window handle; also used by the pipe server thread
 HWND g_serverHwnd = nullptr;
 
-// Screen range pre-selected in the tray submenu while OFF (applied by the toggle)
-std::wstring pendingSpec_;
+// Screen range pre-selected in the tray submenu while OFF (applied by the toggle).
+// Defaults to all screens, matching the default enable behaviour.
+std::wstring pendingSpec_ = L"all";
 
 // ---------- IPC request handling (UI thread) ----------
 
@@ -290,6 +291,7 @@ void ShowTrayMenu(HWND hwnd)
             }
             else
             {
+                pendingSpec_ = m.device; // remember for the next toggle
                 ipc::Request req;
                 req.kind        = ipc::Request::Kind::On;
                 req.monitorSpec = m.device;
